@@ -10,7 +10,29 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-java:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java 8
+        uses: actions/setup-java@v5
+        with:
+          java-version: 8
+          distribution: zulu
+      - name: Prepare build directory
+        run: mkdir -p build
+      - name: Compile Java and Generate JNI headers
+        run: javac -h build -d build -encoding utf8 -extdirs "" -source 1.3 -target 1.2 -bootclasspath lib/jdk-1_2_2_017-rt.jar src/uc/java/*.java
+      - name: Upload Java classes and headers
+        uses: actions/upload-artifact@v4
+        with:
+          name: java-build
+          path: |
+            build/uc/java/*.class
+            build/*.h
+
   build-native:
+    needs: build-java
     strategy:
       fail-fast: false
       matrix:
@@ -82,6 +104,12 @@ jobs:
           java-version: 8
           distribution: zulu
 
+      - name: Download Java classes and headers
+        uses: actions/download-artifact@v4
+        with:
+          name: java-build
+          path: build
+
       - name: Install cross compilers
         if: runner.os == 'Linux'
         run: |
@@ -92,21 +120,17 @@ jobs:
 
       - name: Prepare output dirs
         run: |
-          mkdir -p build/uc/lang
-          mkdir -p build/uc/lang/native/${{ matrix.osname }}-${{ matrix.arch }}
-
-      - name: Compile Java sources
-        run: javac -d build -encoding utf8 -extdirs "" -source 1.3 -target 1.2 -bootclasspath lib/jdk-1_2_2_017-rt.jar src/uc/lang/*.java
-
-      - name: Generate JNI headers
-        run: javac -h build src/uc/lang/*.java
+          mkdir -p build/uc/java
+          mkdir -p build/uc/java/native/${{ matrix.osname }}-${{ matrix.arch }}
 
       # LINUX BUILD
       - name: Build native lib (Linux)
         if: runner.os == 'Linux'
         run: |
-          ${{ matrix.gcc }} -shared -fPIC -o build/uc/lang/native/${{ matrix.osname }}-${{ matrix.arch }}/libosclock.${{ matrix.soext }} \
-            -I"${JAVA_HOME}/include" -I"${JAVA_HOME}/include/linux" osclock.c || echo "Build fail or skip for ${{ matrix.osname }} ${{ matrix.arch }}"
+          ${{ matrix.gcc }} -shared -O3 -Wl,-s -fno-math-errno -fno-trapping-math -fno-signed-zeros -fno-rounding-math -fno-signaling-nans -ffinite-math-only -fexcess-precision=fast \
+            -flto -fomit-frame-pointer -fPIC -o build/uc/java/native/${{ matrix.osname }}-${{ matrix.arch }}/libosclock.${{ matrix.soext }} \
+            -I"${JAVA_HOME}/include" -I"${JAVA_HOME}/include/linux" -I"build" osclock.c || \
+            echo "Build fail or skip for ${{ matrix.osname }} ${{ matrix.arch }}"
 
       # WINDOWS BUILD
       - name: Find MSVC location (Windows)
@@ -122,27 +146,32 @@ jobs:
         run: |
           DEL /f /q osclock.exp osclock.lib osclock.obj >nul 2>nul
           CALL "%VSINSTALL%\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.vcvars }} ${{ matrix.winsdk }}
-          cl /LD /I"%JAVA_HOME%\include" /I"%JAVA_HOME%\include\win32" osclock.c /Fe:build\uc\lang\native\${{ matrix.osname }}-${{ matrix.arch }}\libosclock.${{ matrix.soext }} || ^
+          CL /LD /O2 /GL /Oi /Ot /Oy /GS- /Gy /GA /Gw /DNDEBUG /fp:fast ^
+          /I"%JAVA_HOME%\include" /I"%JAVA_HOME%\include\win32" /I"build" osclock.c /Fe:build\uc\java\native\${{ matrix.osname }}-${{ matrix.arch }}\libosclock.${{ matrix.soext }} ^
+          /link /LTCG /OPT:REF /OPT:ICF /INCREMENTAL:NO /RELEASE || ^
           ECHO "Build fail or skip for ${{ matrix.osname }} ${{ matrix.arch }}"
 
       # MACOS BUILD
       - name: Build native lib (macOS)
         if: runner.os == 'macOS'
         run: |
-          clang -arch ${{ matrix.clang_arch }} -dynamiclib -o build/uc/lang/native/${{ matrix.osname }}-${{ matrix.arch }}/libosclock.${{ matrix.soext }} \
-            -I"${JAVA_HOME}/include" -I"${JAVA_HOME}/include/darwin" osclock.c || echo "Build fail or skip for ${{ matrix.osname }} ${{ matrix.arch }}"
+          clang -arch ${{ matrix.clang_arch }} -dynamiclib -O3 -Wl,-S -Wl,-x -fno-math-errno -fno-trapping-math -fno-signed-zeros -fno-rounding-math -fno-signaling-nans -ffinite-math-only -fexcess-precision=fast \
+            -flto -fomit-frame-pointer -o build/uc/java/native/${{ matrix.osname }}-${{ matrix.arch }}/libosclock.${{ matrix.soext }} \
+            -I"${JAVA_HOME}/include" -I"${JAVA_HOME}/include/darwin" -I"build" osclock.c || \
+            echo "Build fail or skip for ${{ matrix.osname }} ${{ matrix.arch }}"
 
       - name: Upload per-arch artifact (class & lib)
         uses: actions/upload-artifact@v4
         with:
           name: artifact-${{ matrix.osname }}-${{ matrix.arch }}
           path: |
-            build/uc/lang/*.class
-            build/uc/lang/native/${{ matrix.osname }}-${{ matrix.arch }}/*
+            build/uc/java/*.class
+            build/uc/java/native/${{ matrix.osname }}-${{ matrix.arch }}/*
           if-no-files-found: ignore
 
   # ANDROID BUILD
   build-android:
+    needs: build-java
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -152,19 +181,19 @@ jobs:
           java-version: 8
           distribution: zulu
 
+      - name: Download Java classes and headers
+        uses: actions/download-artifact@v4
+        with:
+          name: java-build
+          path: build
+
       - name: Prepare output dirs
         run: |
-          mkdir -p build/uc/lang
+          mkdir -p build/uc/java
           abis="armeabi-v7a arm64-v8a x86 x86_64"
           for abi in $abis; do
-            mkdir -p build/uc/lang/native/android-$abi
+            mkdir -p build/uc/java/native/android-$abi
           done
-
-      - name: Compile Java sources (Android)
-        run: javac -d build -encoding utf8 -extdirs "" -source 1.3 -target 1.2 -bootclasspath lib/jdk-1_2_2_017-rt.jar src/uc/lang/*.java
-
-      - name: Generate JNI headers (Android)
-        run: javac -h build src/uc/lang/*.java
 
       - name: Build JNI libs for all Android ABIs
         run: |
@@ -188,9 +217,10 @@ jobs:
                 outext="so"
                 ;;
             esac
-            $tool -shared -fPIC -o build/uc/lang/native/android-$abi/libosclock.$outext \
-              -I"${JAVA_HOME}/include" -I"${JAVA_HOME}/include/linux" -I"$ANDROID_NDK/sysroot/usr/include" osclock.c \
-              || echo "Build fail or skip for android-$abi"
+            $tool -shared -O3 -fno-math-errno -fno-trapping-math -fno-signed-zeros -fno-rounding-math -fno-signaling-nans -ffinite-math-only -fexcess-precision=fast \
+              -flto -fomit-frame-pointer -fPIC -Wl,-strip-all -o build/uc/java/native/android-$abi/libosclock.$outext \
+              -I"${JAVA_HOME}/include" -I"${JAVA_HOME}/include/linux" -I"$ANDROID_NDK/sysroot/usr/include" -I"build" osclock.c || \
+              echo "Build fail or skip for android-$abi"
           done
 
       - name: Upload Android artifact
@@ -198,8 +228,8 @@ jobs:
         with:
           name: artifact-android
           path: |
-            build/uc/lang/*.class
-            build/uc/lang/native/android-*/libosclock.so
+            build/uc/java/*.class
+            build/uc/java/native/android-*/libosclock.so
           if-no-files-found: ignore
 
   combine-universal-jar:
@@ -213,18 +243,14 @@ jobs:
 
       - name: Prepare content for JAR (merge)
         run: |
-          mkdir -p all/uc/lang/native
-          find extracted -name '*.class' -path '*/uc/lang/*.class' -exec cp -u -t all/uc/lang/ {} +
+          mkdir -p all/uc/java/native
+          find extracted -name '*.class' -path '*/uc/java/*.class' -exec cp -u -t all/uc/java/ {} +
           echo "Copying native libraries..."
           find extracted -type f \( -name "*.so" -o -name "*.dll" -o -name "*.dylib" \) -path '*/native/*' | while read -r libfile; do
               osarch=$(basename $(dirname "$libfile"))
-              mkdir -p "all/uc/lang/native/$osarch"
-              cp -v "$libfile" "all/uc/lang/native/$osarch/"
+              mkdir -p "all/uc/java/native/$osarch"
+              cp -v "$libfile" "all/uc/java/native/$osarch/"
           done
-
-      - name: List JAR contents for diagnostics
-        run: |
-          tree all/
 
       - name: Create universal JAR
         run: |
@@ -235,3 +261,11 @@ jobs:
         with:
           name: osclock-universal
           path: osclock-universal.jar
+
+      - name: Clean up intermediate artifacts
+        uses: actions/delete-artifact@v5
+        with:
+          name: |
+            java-build
+            artifact-*
+          fail-on-error: false

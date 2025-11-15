@@ -1,8 +1,9 @@
-package uc.lang;
+package uc.java;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Locale;
 public final class OSClock {
 	static {
 		NativeUtils.loadLibraryFromJar();
@@ -35,8 +36,9 @@ public final class OSClock {
 	public static final native long getEpochMillis();
 	private static final class NativeUtils {
 		private static final void loadLibraryFromJar() {
-			String os = System.getProperty("os.name").toLowerCase(), arch = System.getProperty("os.arch").toLowerCase(), nativePathSuffix, libExtension;
-			if(os.indexOf("android") >= 0) {
+			String os = System.getProperty("os.name").toLowerCase(Locale.ENGLISH), arch = System.getProperty("os.arch").toLowerCase(Locale.ENGLISH), nativePathSuffix, libExtension;
+			try {
+				Class.forName("android.os.Build", false, OSClock.class.getClassLoader());
 				libExtension = "so";
 				if(arch.equals("aarch64") || arch.equals("arm64")) nativePathSuffix = "android-arm64-v8a";
 				else if(arch.equals("amd64") || arch.equals("x86_64")) nativePathSuffix = "android-x86_64";
@@ -44,36 +46,38 @@ public final class OSClock {
 				else if(arch.equals("x86") || arch.equals("i386") || arch.equals("i686")) nativePathSuffix = "android-x86";
 				else throw new RuntimeException("Unsupported Android architecture: " + arch);
 			}
-			else if(os.indexOf("win") >= 0) {
-				libExtension = "dll";
-				if(arch.equals("aarch64") || arch.equals("arm64")) nativePathSuffix = "windows-arm64";
-				else if(arch.equals("amd64") || arch.equals("x86_64")) nativePathSuffix = "windows-x64";
-				else if(arch.indexOf("arm") >= 0) nativePathSuffix = "windows-arm";
-				else if(arch.equals("x86") || arch.equals("i386") || arch.equals("i686")) nativePathSuffix = "windows-x86";
-				else throw new RuntimeException("Unsupported Windows architecture: " + arch);
+			catch(ClassNotFoundException e) {
+				if(os.indexOf("mac") >= 0 || os.indexOf("darwin") >= 0) {
+					libExtension = "dylib";
+					if(arch.equals("aarch64") || arch.equals("arm64")) nativePathSuffix = "macos-arm64";
+					else if(arch.equals("amd64") || arch.equals("x86_64")) nativePathSuffix = "macos-x64";
+					else throw new RuntimeException("Unsupported macOS architecture: " + arch);
+				}
+				else if(os.indexOf("win") >= 0) {
+					libExtension = "dll";
+					if(arch.equals("aarch64") || arch.equals("arm64")) nativePathSuffix = "windows-arm64";
+					else if(arch.equals("amd64") || arch.equals("x86_64")) nativePathSuffix = "windows-x64";
+					else if(arch.indexOf("arm") >= 0) nativePathSuffix = "windows-arm";
+					else if(arch.equals("x86") || arch.equals("i386") || arch.equals("i686")) nativePathSuffix = "windows-x86";
+					else throw new RuntimeException("Unsupported Windows architecture: " + arch);
+				}
+				else if(os.indexOf("nux") >= 0) {
+					libExtension = "so";
+					if(arch.equals("aarch64") || arch.equals("arm64")) nativePathSuffix = "linux-arm64";
+					else if(arch.equals("amd64") || arch.equals("x86_64")) nativePathSuffix = "linux-x64";
+					else if(arch.indexOf("arm") >= 0) nativePathSuffix = "linux-arm";
+					else if(arch.equals("x86") || arch.equals("i386") || arch.equals("i686")) nativePathSuffix = "linux-x86";
+					else throw new RuntimeException("Unsupported Linux architecture: " + arch);
+				}
+				else throw new RuntimeException("Unsupported OS: " + os);
 			}
-			else if(os.indexOf("mac") >= 0) {
-				libExtension = "dylib";
-				if(arch.equals("aarch64") || arch.equals("arm64")) nativePathSuffix = "macos-arm64";
-				else if(arch.equals("amd64") || arch.equals("x86_64")) nativePathSuffix = "macos-x64";
-				else throw new RuntimeException("Unsupported macOS architecture: " + arch);
-			}
-			else if(os.indexOf("nux") >= 0) {
-				libExtension = "so";
-				if(arch.equals("aarch64") || arch.equals("arm64")) nativePathSuffix = "linux-arm64";
-				else if(arch.equals("amd64") || arch.equals("x86_64")) nativePathSuffix = "linux-x64";
-				else if(arch.indexOf("arm") >= 0) nativePathSuffix = "linux-arm";
-				else if(arch.equals("x86") || arch.equals("i386") || arch.equals("i686")) nativePathSuffix = "linux-x86";
-				else throw new RuntimeException("Unsupported Linux architecture: " + arch);
-			}
-			else throw new RuntimeException("Unsupported OS: " + os);
-			String libName = "libosclock." + libExtension, resourcePath = "/uc/lang/native/" + nativePathSuffix + '/' + libName;
+			String libName = "libosclock." + libExtension, resourcePath = "/uc/java/native/" + nativePathSuffix + '/' + libName;
 			InputStream is = null;
 			File temp = null;
 			FileOutputStream fos = null;
 			try {
 				is = OSClock.class.getResourceAsStream(resourcePath);
-				if(is == null) throw new UnsatisfiedLinkError("Native lib not found in JAR: " + resourcePath);
+				if(is == null) throw new UnsatisfiedLinkError("Native lib: " + resourcePath + "not found in JAR!");
 				temp = File.createTempFile("jOSClock", libExtension);
 				temp.deleteOnExit();
 				fos = new FileOutputStream(temp);
@@ -89,7 +93,7 @@ public final class OSClock {
 			}
 			catch(Exception e) {
 				if(temp != null) temp.delete();
-				throw new RuntimeException("Failed to load native lib: " + resourcePath);
+				throw new RuntimeException("Failed to load native lib: " + resourcePath + ": " + e);
 			}
 			finally {
 				if(fos != null) {
