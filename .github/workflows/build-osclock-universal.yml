@@ -146,7 +146,7 @@ jobs:
         shell: cmd
         run: |
           DEL /f /q osclock.exp osclock.lib osclock.obj >nul 2>nul
-          CALL "%VSINSTALL%\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.vcvars }} ${{ matrix.winsdk }}
+          CALL "%VSINSTALL%\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.vcvars }}
           CL /LD /O2 /GL /Oi /Ot /Oy /GS- /Gy /GA /Gw /DNDEBUG /fp:fast ^
           /I"%JAVA_HOME%\include" /I"%JAVA_HOME%\include\win32" /I"build" osclock.c /Fe:build\uc\java\native\${{ matrix.osname }}-${{ matrix.arch }}\libosclock.${{ matrix.soext }} ^
           /link /LTCG /OPT:REF /OPT:ICF /INCREMENTAL:NO /RELEASE || ^
@@ -269,4 +269,4 @@ jobs:
           name: |
             java-build
             artifact-*
-          fail-on-error: false
+          failOnError: false
